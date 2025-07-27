@@ -13,6 +13,8 @@ import { Car, Zap, Utensils, ShoppingBag, ArrowLeft, ArrowRight, Calculator } fr
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts"
 
 export default function CalculatorPage() {
+  type BreakdownItem = { name: string; value: number; color: string }
+  type ResultType = { total: number; breakdown: BreakdownItem[] } | { error: string }
   const [currentStep, setCurrentStep] = useState(1)
   const [formData, setFormData] = useState({
     // Travel
@@ -27,7 +29,8 @@ export default function CalculatorPage() {
     // Shopping
     monthlySpend: 5000,
   })
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState<ResultType | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   const steps = [
     { id: 1, title: "Travel Habits", icon: Car },
@@ -36,34 +39,49 @@ export default function CalculatorPage() {
     { id: 4, title: "Shopping Habits", icon: ShoppingBag },
   ]
 
-  const calculateFootprint = () => {
-    // Simple calculation logic (in real app, this would be more sophisticated)
-    const travelEmissions = formData.carKmWeek * 52 * 0.2 + formData.flightHours * 250
-    const energyEmissions = formData.electricityKwh * 12 * 0.5 + formData.gasUsage * 12 * 2.3
-    const foodEmissions =
-      formData.dietType === "vegan"
-        ? 1500
-        : formData.dietType === "vegetarian"
-          ? 2500
-          : formData.dietType === "pescatarian"
-            ? 2000
-            : 3500
-    const shoppingEmissions = formData.monthlySpend * 12 * 0.1
+  const calculateFootprint = async () => {
+    setIsLoading(true)
+    try {
+      // Encode dietType for backend
+      let dietTypeEncoded = 3; // Default: omnivore
+      if (formData.dietType === "vegan") dietTypeEncoded = 0;
+      else if (formData.dietType === "vegetarian") dietTypeEncoded = 1;
+      else if (formData.dietType === "pescatarian") dietTypeEncoded = 2;
 
-    const total = travelEmissions + energyEmissions + foodEmissions + shoppingEmissions
+      const payload = { ...formData, dietType: dietTypeEncoded };
+      const response = await fetch("http://localhost:5000/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
 
-    const breakdown = [
-      { name: "Travel", value: Math.round(travelEmissions), color: "#ef4444" },
-      { name: "Energy", value: Math.round(energyEmissions), color: "#f59e0b" },
-      { name: "Food", value: Math.round(foodEmissions), color: "#10b981" },
-      { name: "Shopping", value: Math.round(shoppingEmissions), color: "#8b5cf6" },
-    ]
+      // Calculate breakdown locally for chart (optional, can be improved with backend)
+      const travelEmissions = formData.carKmWeek * 52 * 0.2 + formData.flightHours * 250;
+      const energyEmissions = formData.electricityKwh * 12 * 0.5 + formData.gasUsage * 12 * 2.3;
+      const foodEmissions =
+        formData.dietType === "vegan"
+          ? 1500
+          : formData.dietType === "vegetarian"
+            ? 2500
+            : formData.dietType === "pescatarian"
+              ? 2000
+              : 3500;
+      const shoppingEmissions = formData.monthlySpend * 12 * 0.1;
+      const breakdown: BreakdownItem[] = [
+        { name: "Travel", value: Math.round(travelEmissions), color: "#ef4444" },
+        { name: "Energy", value: Math.round(energyEmissions), color: "#f59e0b" },
+        { name: "Food", value: Math.round(foodEmissions), color: "#10b981" },
+        { name: "Shopping", value: Math.round(shoppingEmissions), color: "#8b5cf6" },
+      ];
 
-    setResult({
-      total: Math.round(total),
-      breakdown,
-    })
-  }
+      setResult({ total: Math.round(data.carbon_footprint), breakdown });
+    } catch (err) {
+      setResult({ error: "Prediction failed" });
+    } finally {
+      setIsLoading(false);
+    }
+  } // End calculateFootprint
 
   const nextStep = () => {
     if (currentStep < 4) {
@@ -79,11 +97,11 @@ export default function CalculatorPage() {
     }
   }
 
-  const updateFormData = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
+  const updateFormData = (field: keyof typeof formData, value: number | string) => {
+    setFormData((prev: typeof formData) => ({ ...prev, [field]: value }))
   }
 
-  if (result) {
+  if (result && 'total' in result) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-green-50 to-white py-12 px-4">
         <div className="max-w-4xl mx-auto">
@@ -100,9 +118,9 @@ export default function CalculatorPage() {
                   {result.total.toLocaleString()}
                   <span className="text-2xl text-gray-600 ml-2">kg/year</span>
                 </div>
-                <Badge variant="destructive" className="mt-2">
-                  Above Global Average (4,800 kg)
-                </Badge>
+                <div className="mt-2 bg-red-100 text-red-700 rounded px-2 py-1 inline-block">
+                  <Badge>Above Global Average (4,800 kg)</Badge>
+                </div>
               </CardHeader>
             </Card>
 
@@ -114,11 +132,11 @@ export default function CalculatorPage() {
                 <ResponsiveContainer width="100%" height={250}>
                   <PieChart>
                     <Pie data={result.breakdown} cx="50%" cy="50%" outerRadius={80} dataKey="value">
-                      {result.breakdown.map((entry, index) => (
+                      {result.breakdown.map((entry: BreakdownItem, index: number) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => [`${value} kg`, "CO₂ Emissions"]} />
+                    <Tooltip formatter={(value: number) => [`${value} kg`, "CO₂ Emissions"]} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -127,7 +145,7 @@ export default function CalculatorPage() {
           </div>
 
           <div className="mt-8 grid md:grid-cols-4 gap-4">
-            {result.breakdown.map((category, index) => (
+            {result.breakdown.map((category: BreakdownItem, index: number) => (
               <Card key={index} className="text-center">
                 <CardContent className="p-4">
                   <div className="text-2xl font-bold" style={{ color: category.color }}>
@@ -145,6 +163,20 @@ export default function CalculatorPage() {
             </Button>
             <Button className="bg-green-600 hover:bg-green-700">View Recommendations</Button>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (result && 'error' in result) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-600 mb-4">Error</h1>
+          <p className="text-lg text-gray-700 mb-4">{result.error}</p>
+          <Button onClick={() => setResult(null)} variant="outline">
+            Try Again
+          </Button>
         </div>
       </div>
     )
